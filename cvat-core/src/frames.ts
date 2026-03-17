@@ -28,6 +28,7 @@ const frameDataCache: Record<string, {
     prefetchAnalyzer: PrefetchAnalyzer;
     decodedBlocksCacheSize: number;
     activeChunkRequest: Promise<void> | null;
+    rawChunkFetchCache: Map<number, Promise<ArrayBuffer>>;
     activeContextRequest: Promise<Record<number, ImageBitmap>> | null;
     segmentFrameNumbers: number[];
     contextCache: Record<number, {
@@ -458,7 +459,7 @@ Object.defineProperty(FrameData.prototype.data, 'implementation', {
     async value(this: FrameData, onServerRequest) {
         const {
             provider, prefetchAnalyzer, chunkSize, jobStartFrame,
-            decodeForward, forwardStep, decodedBlocksCacheSize, segmentFrameNumbers,
+            decodeForward, decodedBlocksCacheSize, segmentFrameNumbers,
         } = frameDataCache[this.jobID];
         const meta = await frameDataCache[this.jobID].getMeta();
 
@@ -472,72 +473,73 @@ Object.defineProperty(FrameData.prototype.data, 'implementation', {
             const chunkIndex = meta.getFrameChunkIndex(requestedDataFrameNumber);
             const frame = provider.frame(this.number);
 
-            function findTheNextNotDecodedChunk(currentFrameIndex: number): number | null {
-                const { chunkCount } = meta;
-                // forwardStep can be undefined when playback doesn't pass a step;
-                // fall back to 1 so chunk boundary detection always works
-                const safeStep = forwardStep > 0 ? forwardStep : 1;
-                let nextFrameIndex = currentFrameIndex + safeStep;
-                let nextChunkIndex = Math.floor(nextFrameIndex / chunkSize);
-                while (nextChunkIndex === chunkIndex) {
-                    nextFrameIndex += safeStep;
-                    nextChunkIndex = Math.floor(nextFrameIndex / chunkSize);
-                }
+            const jobID = this.jobID;
 
-                if (nextChunkIndex < 0 || chunkCount <= nextChunkIndex) {
-                    return null;
-                }
+            // Ensure a chunk's raw data is being fetched from the server (idempotent).
+            const ensureChunkFetched = (targetChunk: number): void => {
+                if (!(jobID in frameDataCache)) return;
+                if (targetChunk < 0 || targetChunk >= meta.chunkCount) return;
+                if (provider.isChunkCached(targetChunk)) return;
+                const fetchCache = frameDataCache[jobID].rawChunkFetchCache;
+                if (fetchCache.has(targetChunk)) return;
+                const fp = frameDataCache[jobID].getChunk(targetChunk, ChunkQuality.COMPRESSED);
+                fetchCache.set(targetChunk, fp);
+                fp.catch(() => {
+                    frameDataCache[jobID]?.rawChunkFetchCache.delete(targetChunk);
+                });
+            };
 
-                if (provider.isChunkCached(nextChunkIndex)) {
-                    return findTheNextNotDecodedChunk(nextFrameIndex);
-                }
+            // Decode the next chunk using its pre-fetched data (if available).
+            // Does NOT auto-chain — each frame request re-evaluates what to decode next,
+            // preventing the chain from racing ahead and evicting the current chunk.
+            const startNextChunkDecode = (targetChunk: number): void => {
+                if (!(jobID in frameDataCache)) return;
+                const cache = frameDataCache[jobID];
+                if (cache.activeChunkRequest) return;
+                const fetchPromise = cache.rawChunkFetchCache.get(targetChunk);
+                if (!fetchPromise) return;
 
-                return nextChunkIndex;
-            }
+                cache.activeChunkRequest = new Promise<void>((resolveForward) => {
+                    const done = (): void => {
+                        resolveForward();
+                        if (jobID in frameDataCache) {
+                            frameDataCache[jobID].activeChunkRequest = null;
+                            frameDataCache[jobID].rawChunkFetchCache.delete(targetChunk);
+                        }
+                    };
+
+                    fetchPromise.then((chunk: ArrayBuffer) => {
+                        if (!(jobID in frameDataCache)) { resolveForward(); return; }
+                        provider.cleanup(1);
+                        provider.requestDecodeBlock(
+                            chunk,
+                            targetChunk,
+                            segmentFrameNumbers.slice(
+                                targetChunk * chunkSize,
+                                (targetChunk + 1) * chunkSize,
+                            ),
+                            () => {},
+                            done,
+                            done,
+                        );
+                    }).catch(() => {
+                        if (jobID in frameDataCache) frameDataCache[jobID].activeChunkRequest = null;
+                        resolveForward();
+                    });
+                });
+            };
 
             if (frame) {
-                if (
-                    prefetchAnalyzer.shouldPrefetchNext(
-                        this.number,
-                        decodeForward,
-                        (chunk) => provider.isChunkCached(chunk),
-                    ) && decodedBlocksCacheSize > 1 && !frameDataCache[this.jobID].activeChunkRequest
-                ) {
-                    const nextChunkIndex = findTheNextNotDecodedChunk(
-                        meta.getFrameIndex(requestedDataFrameNumber),
-                    );
-                    const predecodeChunksMax = Math.floor(decodedBlocksCacheSize / 2);
-                    if (nextChunkIndex !== null &&
-                        nextChunkIndex <= chunkIndex + predecodeChunksMax
-                    ) {
-                        frameDataCache[this.jobID].activeChunkRequest = new Promise<void>((resolveForward) => {
-                            const releaseForward = (): void => {
-                                resolveForward();
-                                frameDataCache[this.jobID].activeChunkRequest = null;
-                            };
-                            frameDataCache[this.jobID].getChunk(
-                                nextChunkIndex, ChunkQuality.COMPRESSED,
-                            ).then((chunk: ArrayBuffer) => {
-                                if (!(this.jobID in frameDataCache)) {
-                                    resolveForward();
-                                    return;
-                                }
-                                provider.cleanup(1);
-                                provider.requestDecodeBlock(
-                                    chunk,
-                                    nextChunkIndex,
-                                    segmentFrameNumbers.slice(
-                                        nextChunkIndex * chunkSize,
-                                        (nextChunkIndex + 1) * chunkSize,
-                                    ),
-                                    () => {},
-                                    releaseForward,
-                                    releaseForward,
-                                );
-                            }).catch(() => {
-                                releaseForward();
-                            });
-                        });
+                if (decodeForward && decodedBlocksCacheSize > 1) {
+                    // Pre-fetch next 3 chunks from the network in parallel so data is
+                    // ready well before it is needed.
+                    for (let i = 1; i <= 3; i++) {
+                        ensureChunkFetched(chunkIndex + i);
+                    }
+                    // Decode only the immediately next chunk — don't race ahead and
+                    // evict frames that are still being played.
+                    if (!frameDataCache[jobID].activeChunkRequest) {
+                        startNextChunkDecode(chunkIndex + 1);
                     }
                 }
 
@@ -932,6 +934,7 @@ export async function getFrame(
             prefetchAnalyzer: new PrefetchAnalyzer(meta, dataFrameNumberGetter),
             decodedBlocksCacheSize,
             activeChunkRequest: null,
+            rawChunkFetchCache: new Map<number, Promise<ArrayBuffer>>(),
             activeContextRequest: null,
             latestFrameDecodeRequest: null,
             latestContextImagesRequest: null,
