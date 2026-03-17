@@ -37,7 +37,7 @@ import {
 } from 'reducers';
 import isAbleToChangeFrame from 'utils/is-able-to-change-frame';
 import { KeyMap } from 'utils/mousetrap-react';
-import { switchToolsBlockerState } from 'actions/settings-actions';
+import { switchToolsBlockerState, changePlaybackSpeedMultiplier } from 'actions/settings-actions';
 import { writeLatestFrame } from 'utils/remember-latest-frame';
 import { finishDraw } from 'utils/drawing';
 import { toClipboard } from 'utils/to-clipboard';
@@ -53,6 +53,7 @@ interface StateToProps {
     frameStep: number;
     frameSpeed: FrameSpeed;
     frameDelay: number;
+    playbackSpeedMultiplier: number;
     frameFetching: boolean;
     playing: boolean;
     saving: boolean;
@@ -106,6 +107,7 @@ interface DispatchToProps {
     restoreFrame(frame: number): void;
     switchNavigationBlocked(blocked: boolean): void;
     setNavigationType(navigationType: NavigationType): void;
+    onChangePlaybackSpeedMultiplier(multiplier: number): void;
 }
 
 function mapStateToProps(state: CombinedState): StateToProps {
@@ -134,7 +136,7 @@ function mapStateToProps(state: CombinedState): StateToProps {
             workspace,
         },
         settings: {
-            player: { frameSpeed, frameStep, showDeletedFrames },
+            player: { frameSpeed, frameStep, showDeletedFrames, playbackSpeedMultiplier },
             workspace: {
                 autoSave,
                 autoSaveInterval,
@@ -161,6 +163,7 @@ function mapStateToProps(state: CombinedState): StateToProps {
         frameSpeed,
         frameDelay,
         frameFetching,
+        playbackSpeedMultiplier,
         playing,
         canvasIsReady,
         hoveredChapter,
@@ -256,6 +259,9 @@ function mapDispatchToProps(dispatch: any): DispatchToProps {
         setNavigationType(navigationType: NavigationType): void {
             dispatch(setNavigationTypeAction(navigationType));
         },
+        onChangePlaybackSpeedMultiplier(multiplier: number): void {
+            dispatch(changePlaybackSpeedMultiplier(multiplier));
+        },
     };
 }
 
@@ -327,6 +333,7 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
             frameFetching,
             playing,
             canvasIsReady,
+            playbackSpeedMultiplier,
             onSwitchPlay,
             onChangeFrame,
         } = this.props;
@@ -343,7 +350,8 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
                 const { playing: currentPlaying, showDeletedFrames } = this.props;
 
                 if (currentPlaying) {
-                    const nextCandidate = frameNumber + 1;
+                    const step = playbackSpeedMultiplier || 1;
+                    const nextCandidate = frameNumber + step;
                     if (nextCandidate > stopFrame) {
                         onSwitchPlay(false);
                         return;
@@ -352,7 +360,7 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
                     const next = await jobInstance.frames
                         .search({ notDeleted: !showDeletedFrames }, nextCandidate, stopFrame);
                     if (next !== null && isAbleToChangeFrame(next)) {
-                        onChangeFrame(next, currentPlaying);
+                        onChangeFrame(next, currentPlaying, step);
                     } else {
                         onSwitchPlay(false);
                     }
@@ -718,10 +726,12 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
             initialOpenGuide,
             toolsBlockerState,
             navigationType,
+            playbackSpeedMultiplier,
             switchNavigationBlocked,
             setNavigationType,
             switchShowSearchPallet,
             showSearchFrameByName,
+            onChangePlaybackSpeedMultiplier,
         } = this.props;
 
         return (
@@ -787,6 +797,8 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
                 toolsBlockerState={toolsBlockerState}
                 jobInstance={jobInstance}
                 activeControl={activeControl}
+                playbackSpeedMultiplier={playbackSpeedMultiplier}
+                onChangePlaybackSpeedMultiplier={onChangePlaybackSpeedMultiplier}
             />
         );
     }

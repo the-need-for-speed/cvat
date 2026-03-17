@@ -474,10 +474,13 @@ Object.defineProperty(FrameData.prototype.data, 'implementation', {
 
             function findTheNextNotDecodedChunk(currentFrameIndex: number): number | null {
                 const { chunkCount } = meta;
-                let nextFrameIndex = currentFrameIndex + forwardStep;
+                // forwardStep can be undefined when playback doesn't pass a step;
+                // fall back to 1 so chunk boundary detection always works
+                const safeStep = forwardStep > 0 ? forwardStep : 1;
+                let nextFrameIndex = currentFrameIndex + safeStep;
                 let nextChunkIndex = Math.floor(nextFrameIndex / chunkSize);
                 while (nextChunkIndex === chunkIndex) {
-                    nextFrameIndex += forwardStep;
+                    nextFrameIndex += safeStep;
                     nextChunkIndex = Math.floor(nextFrameIndex / chunkSize);
                 }
 
@@ -507,22 +510,18 @@ Object.defineProperty(FrameData.prototype.data, 'implementation', {
                     if (nextChunkIndex !== null &&
                         nextChunkIndex <= chunkIndex + predecodeChunksMax
                     ) {
-                        frameDataCache[this.jobID].activeChunkRequest = new Promise((resolveForward) => {
-                            const releasePromise = (): void => {
+                        frameDataCache[this.jobID].activeChunkRequest = new Promise<void>((resolveForward) => {
+                            const releaseForward = (): void => {
                                 resolveForward();
                                 frameDataCache[this.jobID].activeChunkRequest = null;
                             };
-
                             frameDataCache[this.jobID].getChunk(
                                 nextChunkIndex, ChunkQuality.COMPRESSED,
                             ).then((chunk: ArrayBuffer) => {
                                 if (!(this.jobID in frameDataCache)) {
-                                    // check if frameDataCache still exist
-                                    // as it may be released during chunk request
                                     resolveForward();
                                     return;
                                 }
-
                                 provider.cleanup(1);
                                 provider.requestDecodeBlock(
                                     chunk,
@@ -532,11 +531,11 @@ Object.defineProperty(FrameData.prototype.data, 'implementation', {
                                         (nextChunkIndex + 1) * chunkSize,
                                     ),
                                     () => {},
-                                    releasePromise,
-                                    releasePromise,
+                                    releaseForward,
+                                    releaseForward,
                                 );
                             }).catch(() => {
-                                releasePromise();
+                                releaseForward();
                             });
                         });
                     }
@@ -553,7 +552,8 @@ Object.defineProperty(FrameData.prototype.data, 'implementation', {
 
             onServerRequest();
             frameDataCache[this.jobID].latestFrameDecodeRequest = requestId;
-            (frameDataCache[this.jobID].activeChunkRequest || Promise.resolve()).finally(() => {
+            const pendingChunkRequest = frameDataCache[this.jobID].activeChunkRequest || Promise.resolve();
+            pendingChunkRequest.finally(() => {
                 if (frameDataCache[this.jobID]?.latestFrameDecodeRequest !== requestId) {
                     // not relevant request anymore
                     reject(this.number);

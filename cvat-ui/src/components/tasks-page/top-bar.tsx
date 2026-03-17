@@ -9,10 +9,11 @@ import { useHistory } from 'react-router';
 
 import { Row, Col } from 'antd/lib/grid';
 import Popover from 'antd/lib/popover';
-import { LoadingOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons';
+import { LoadingOutlined, PlusOutlined, UploadOutlined, RetweetOutlined } from '@ant-design/icons';
 import Button from 'antd/lib/button';
 import Input from 'antd/lib/input';
 import { importActions } from 'actions/import-actions';
+import { shuffleTasksAsync } from 'actions/tasks-actions';
 import {
     SortingComponent,
     ResourceFilterHOC,
@@ -100,6 +101,14 @@ export default function TopBarComponent(props: Readonly<VisibleTopBarProps>): JS
                             )}
                             onApplyFilter={onApplyFilter}
                         />
+                        <Button
+                            className='cvat-tasks-page-shuffle-button'
+                            type='default'
+                            icon={<RetweetOutlined />}
+                            onClick={() => dispatch(shuffleTasksAsync())}
+                        >
+                            Shuffle
+                        </Button>
                     </div>
                 </div>
                 <div>

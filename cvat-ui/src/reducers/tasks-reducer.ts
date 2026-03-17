@@ -38,6 +38,7 @@ const defaultState: TasksState = {
         deletes: {},
         updates: {},
     },
+    allShuffled: null,
 };
 
 export default (state: TasksState = defaultState, action: AnyAction): TasksState => {
@@ -65,6 +66,7 @@ export default (state: TasksState = defaultState, action: AnyAction): TasksState
                 fetching: false,
                 count: action.payload.count,
                 current: action.payload.array,
+                allShuffled: null,
             };
         }
         case TasksActionTypes.GET_TASKS_FAILED:
@@ -251,6 +253,40 @@ export default (state: TasksState = defaultState, action: AnyAction): TasksState
         }
         case SelectionActionsTypes.CLEAR_SELECTED_RESOURCES: {
             return { ...state, selected: [] };
+        }
+        case TasksActionTypes.SHUFFLE_TASKS: {
+            const allTasks = [...action.payload.tasks];
+            for (let i = allTasks.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [allTasks[i], allTasks[j]] = [allTasks[j], allTasks[i]];
+            }
+            const { pageSize } = state.gettingQuery;
+            return {
+                ...state,
+                allShuffled: allTasks,
+                current: allTasks.slice(0, pageSize),
+                count: allTasks.length,
+                fetching: false,
+                gettingQuery: {
+                    ...state.gettingQuery,
+                    page: 1,
+                },
+            };
+        }
+        case TasksActionTypes.SHUFFLE_PAGE: {
+            const { allShuffled, gettingQuery } = state;
+            if (!allShuffled) return state;
+            const { page, pageSize } = action.payload;
+            const start = (page - 1) * pageSize;
+            return {
+                ...state,
+                current: allShuffled.slice(start, start + pageSize),
+                gettingQuery: {
+                    ...gettingQuery,
+                    page,
+                    pageSize,
+                },
+            };
         }
         default:
             return state;

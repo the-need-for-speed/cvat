@@ -142,6 +142,7 @@ export interface TasksState {
             [taskId: number]: boolean;
         };
     };
+    allShuffled: Task[] | null;
 }
 
 export interface ExportState {
@@ -984,6 +985,7 @@ export interface PlayerSettingsState {
     brightnessLevel: number;
     contrastLevel: number;
     saturationLevel: number;
+    playbackSpeedMultiplier: number;
 }
 
 export interface WorkspaceSettingsState {

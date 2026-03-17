@@ -59,6 +59,7 @@ export enum SettingsActionTypes {
     DISABLE_IMAGE_FILTER = 'DISABLE_IMAGE_FILTER',
     RESET_IMAGE_FILTERS = 'RESET_IMAGE_FILTERS',
     CHANGE_SHAPES_ORIENTATION_VISIBILITY = 'CHANGE_SHAPES_ORIENTATION_VISIBILITY',
+    CHANGE_PLAYBACK_SPEED_MULTIPLIER = 'CHANGE_PLAYBACK_SPEED_MULTIPLIER',
 }
 
 export function changeShapesOpacity(opacity: number): AnyAction {
@@ -193,6 +194,15 @@ export function changeFrameSpeed(frameSpeed: number): AnyAction {
         type: SettingsActionTypes.CHANGE_FRAME_SPEED,
         payload: {
             frameSpeed,
+        },
+    };
+}
+
+export function changePlaybackSpeedMultiplier(multiplier: number): AnyAction {
+    return {
+        type: SettingsActionTypes.CHANGE_PLAYBACK_SPEED_MULTIPLIER,
+        payload: {
+            playbackSpeedMultiplier: multiplier,
         },
     };
 }

@@ -295,75 +295,181 @@ export class FrameDecoder {
             this.requestedChunkToDecode = null;
 
             if (this.blockType === BlockType.MP4VIDEO) {
-                this.videoWorker = new Worker(
-                    new URL('./3rdparty/Decoder.worker', import.meta.url),
-                );
-                let index = 0;
-
-                this.videoWorker.onmessage = (e) => {
-                    if (e.data.consoleLog) {
-                        // ignore initialization message
-                        return;
-                    }
-                    const keptIndex = index;
-                    const frameNumber = getFrameNumber(keptIndex);
-
-                    // do not use e.data.height and e.data.width because they might be not correct
-                    // instead, try to understand real height and width of decoded image via scale factor
-                    const scaleFactor = Math.ceil(this.renderHeight / e.data.height);
-                    const height = Math.round(this.renderHeight / scaleFactor);
-                    const width = Math.round(this.renderWidth / scaleFactor);
-
-                    createImageBitmap(FrameDecoder.cropImage(
-                        e.data.buf,
-                        e.data.width,
-                        e.data.height,
-                        width,
-                        height,
-                    )).then((bitmap) => {
-                        decodedFrames[frameNumber] = bitmap;
-                        this.chunkIsBeingDecoded.onDecode(frameNumber, decodedFrames[frameNumber]);
-
-                        if (keptIndex === chunkFrameNumbers.length - 1) {
-                            this.decodedChunks[chunkIndex] = decodedFrames;
-                            this.chunkIsBeingDecoded.onDecodeAll();
-                            this.chunkIsBeingDecoded = null;
-                            release();
-                        }
-                    });
-
-                    index++;
-                };
-
-                this.videoWorker.onerror = (event: ErrorEvent) => {
-                    release();
-                    this.chunkIsBeingDecoded.onReject(event.error);
-                    this.chunkIsBeingDecoded = null;
-                };
-
-                this.videoWorker.postMessage({
-                    type: 'Broadway.js - Worker init',
-                    options: {
-                        rgb: true,
-                        reuseMemory: false,
-                    },
-                });
-
                 const reader = new MP4Reader(new Bytestream(block));
                 reader.read();
                 const video = reader.tracks[1];
+                const avc = video.trak.mdia.minf.stbl.stsd.avc1.avcC;
+                const sps: Uint8Array = avc.sps[0];
+                const pps: Uint8Array = avc.pps[0];
+                const sampleCount = video.getSampleCount();
 
-                const avc = reader.tracks[1].trak.mdia.minf.stbl.stsd.avc1.avcC;
-                const sps = avc.sps[0];
-                const pps = avc.pps[0];
+                if (typeof VideoDecoder !== 'undefined') {
+                    // WebCodecs path — hardware-accelerated H.264 decode
+                    // avcC = 8 header bytes + sps + 3 bytes + pps
+                    // (version, profile, compat, level, lengthSize, numSPS, spsLen[2], sps data, numPPS, ppsLen[2], pps data)
+                    const avcCSize = 8 + sps.length + 3 + pps.length;
+                    const avcCBuf = new Uint8Array(avcCSize);
+                    let pos = 0;
+                    avcCBuf[pos++] = 1;                          // configurationVersion
+                    avcCBuf[pos++] = sps[1];                     // AVCProfileIndication
+                    avcCBuf[pos++] = sps[2];                     // profile_compatibility
+                    avcCBuf[pos++] = sps[3];                     // AVCLevelIndication
+                    avcCBuf[pos++] = 0xFF;                       // lengthSizeMinusOne = 3 (4-byte lengths)
+                    avcCBuf[pos++] = 0xE1;                       // numSPS = 1 (top 3 bits reserved=1)
+                    avcCBuf[pos++] = (sps.length >> 8) & 0xFF;
+                    avcCBuf[pos++] = sps.length & 0xFF;
+                    avcCBuf.set(sps, pos); pos += sps.length;
+                    avcCBuf[pos++] = 1;                          // numPPS = 1
+                    avcCBuf[pos++] = (pps.length >> 8) & 0xFF;
+                    avcCBuf[pos++] = pps.length & 0xFF;
+                    avcCBuf.set(pps, pos);
 
-                this.videoWorker.postMessage({ buf: sps, offset: 0, length: sps.length });
-                this.videoWorker.postMessage({ buf: pps, offset: 0, length: pps.length });
+                    const codec = `avc1.${sps[1].toString(16).padStart(2, '0')}${sps[2].toString(16).padStart(2, '0')}${sps[3].toString(16).padStart(2, '0')}`;
 
-                for (let sample = 0; sample < video.getSampleCount(); sample++) {
-                    video.getSampleNALUnits(sample).forEach((nal) => {
-                        this.videoWorker.postMessage({ buf: nal, offset: 0, length: nal.length });
+                    let decodeIndex = 0;
+                    let resolvedCount = 0;
+                    let failed = false;
+
+                    const onFrameError = (err: Error): void => {
+                        if (!failed) {
+                            failed = true;
+                            const pending = this.chunkIsBeingDecoded;
+                            this.chunkIsBeingDecoded = null;
+                            release();
+                            pending?.onReject(err);
+                        }
+                    };
+
+                    try {
+                        const decoder = new VideoDecoder({
+                            output: (videoFrame: VideoFrame) => {
+                                if (failed) {
+                                    videoFrame.close();
+                                    return;
+                                }
+                                const frameIndex = decodeIndex++;
+                                const frameNumber = getFrameNumber(frameIndex);
+                                createImageBitmap(videoFrame).then((bitmap) => {
+                                    videoFrame.close();
+                                    if (failed) {
+                                        bitmap.close();
+                                        return;
+                                    }
+                                    decodedFrames[frameNumber] = bitmap;
+                                    this.chunkIsBeingDecoded?.onDecode(frameNumber, bitmap);
+                                    resolvedCount++;
+                                    if (resolvedCount === sampleCount) {
+                                        this.decodedChunks[chunkIndex] = decodedFrames;
+                                        const pending = this.chunkIsBeingDecoded;
+                                        this.chunkIsBeingDecoded = null;
+                                        pending?.onDecodeAll();
+                                        release();
+                                    }
+                                }).catch(onFrameError);
+                            },
+                            error: (err: DOMException) => onFrameError(err),
+                        });
+
+                        decoder.configure({
+                            codec,
+                            description: avcCBuf,
+                            hardwareAcceleration: 'prefer-hardware',
+                        });
+
+                        let timestamp = 0;
+                        for (let sample = 0; sample < sampleCount; sample++) {
+                            const nalUnits: Uint8Array[] = video.getSampleNALUnits(sample);
+                            // getSampleNALUnits strips length prefixes; re-add them (AVCC format)
+                            const totalSize = nalUnits.reduce((sum, nal) => sum + 4 + nal.length, 0);
+                            const avccData = new Uint8Array(totalSize);
+                            let avccPos = 0;
+                            for (const nal of nalUnits) {
+                                const len = nal.length;
+                                avccData[avccPos++] = (len >> 24) & 0xFF;
+                                avccData[avccPos++] = (len >> 16) & 0xFF;
+                                avccData[avccPos++] = (len >> 8) & 0xFF;
+                                avccData[avccPos++] = len & 0xFF;
+                                avccData.set(nal, avccPos);
+                                avccPos += len;
+                            }
+                            // Detect key frame by NAL unit type (IDR slice = type 5)
+                            const isKeyFrame = nalUnits.some((nal) => (nal[0] & 0x1F) === 5);
+                            decoder.decode(new EncodedVideoChunk({
+                                type: isKeyFrame ? 'key' : 'delta',
+                                timestamp,
+                                duration: 1,
+                                data: avccData,
+                            }));
+                            timestamp++;
+                        }
+                        decoder.flush().catch(onFrameError);
+                    } catch (err) {
+                        onFrameError(err instanceof Error ? err : new Error(String(err)));
+                    }
+                } else {
+                    // Broadway.js fallback for environments without WebCodecs
+                    this.videoWorker = new Worker(
+                        new URL('./3rdparty/Decoder.worker', import.meta.url),
+                    );
+                    let index = 0;
+
+                    this.videoWorker.onmessage = (e) => {
+                        if (e.data.consoleLog) {
+                            // ignore initialization message
+                            return;
+                        }
+                        const keptIndex = index;
+                        const frameNumber = getFrameNumber(keptIndex);
+
+                        // do not use e.data.height and e.data.width because they might be not correct
+                        // instead, try to understand real height and width of decoded image via scale factor
+                        const scaleFactor = Math.ceil(this.renderHeight / e.data.height);
+                        const height = Math.round(this.renderHeight / scaleFactor);
+                        const width = Math.round(this.renderWidth / scaleFactor);
+
+                        createImageBitmap(FrameDecoder.cropImage(
+                            e.data.buf,
+                            e.data.width,
+                            e.data.height,
+                            width,
+                            height,
+                        )).then((bitmap) => {
+                            decodedFrames[frameNumber] = bitmap;
+                            this.chunkIsBeingDecoded.onDecode(frameNumber, decodedFrames[frameNumber]);
+
+                            if (keptIndex === chunkFrameNumbers.length - 1) {
+                                this.decodedChunks[chunkIndex] = decodedFrames;
+                                this.chunkIsBeingDecoded.onDecodeAll();
+                                this.chunkIsBeingDecoded = null;
+                                release();
+                            }
+                        });
+
+                        index++;
+                    };
+
+                    this.videoWorker.onerror = (event: ErrorEvent) => {
+                        release();
+                        this.chunkIsBeingDecoded.onReject(event.error);
+                        this.chunkIsBeingDecoded = null;
+                    };
+
+                    this.videoWorker.postMessage({
+                        type: 'Broadway.js - Worker init',
+                        options: {
+                            rgb: true,
+                            reuseMemory: false,
+                        },
                     });
+
+                    this.videoWorker.postMessage({ buf: sps, offset: 0, length: sps.length });
+                    this.videoWorker.postMessage({ buf: pps, offset: 0, length: pps.length });
+
+                    for (let sample = 0; sample < sampleCount; sample++) {
+                        video.getSampleNALUnits(sample).forEach((nal) => {
+                            this.videoWorker.postMessage({ buf: nal, offset: 0, length: nal.length });
+                        });
+                    }
                 }
             } else {
                 this.zipWorker = this.zipWorker || new Worker(

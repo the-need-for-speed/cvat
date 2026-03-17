@@ -14,7 +14,7 @@ import Pagination from 'antd/lib/pagination';
 import { TasksQuery, CombinedState, SelectedResourceType } from 'reducers';
 import { updateHistoryFromQuery } from 'components/resource-sorting-filtering';
 import TaskListContainer from 'containers/tasks-page/tasks-list';
-import { getTasksAsync } from 'actions/tasks-actions';
+import { getTasksAsync, shufflePage } from 'actions/tasks-actions';
 import { anySearch } from 'utils/any-search';
 import { useResourceQuery } from 'utils/hooks';
 import { selectionActions } from 'actions/selection-actions';
@@ -39,10 +39,11 @@ function TasksPageComponent(props: Readonly<Props>): JSX.Element {
     const history = useHistory();
     const [isMounted, setIsMounted] = useState(false);
 
-    const { currentTasks, deletedTasks, selectedCount } = useSelector((state: CombinedState) => ({
+    const { currentTasks, deletedTasks, selectedCount, isShuffled } = useSelector((state: CombinedState) => ({
         currentTasks: state.tasks.current,
         deletedTasks: state.tasks.activities.deletes,
         selectedCount: state.tasks.selected.length,
+        isShuffled: state.tasks.allShuffled !== null,
     }), shallowEqual);
 
     const onSelectAll = useCallback(() => {
@@ -77,11 +78,15 @@ function TasksPageComponent(props: Readonly<Props>): JSX.Element {
                     <Pagination
                         className='cvat-tasks-pagination'
                         onChange={(page: number, pageSize: number) => {
-                            dispatch(getTasksAsync({
-                                ...query,
-                                page,
-                                pageSize,
-                            }));
+                            if (isShuffled) {
+                                dispatch(shufflePage(page, pageSize));
+                            } else {
+                                dispatch(getTasksAsync({
+                                    ...query,
+                                    page,
+                                    pageSize,
+                                }));
+                            }
                         }}
                         total={count}
                         pageSize={query.pageSize}

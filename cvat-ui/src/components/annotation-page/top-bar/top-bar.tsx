@@ -79,6 +79,8 @@ interface Props {
     switchNavigationBlocked(blocked: boolean): void;
     setNavigationType(navigationType: NavigationType): void;
     switchShowSearchPallet(visible: boolean): void;
+    playbackSpeedMultiplier: number;
+    onChangePlaybackSpeedMultiplier(multiplier: number): void;
 }
 
 export default function AnnotationTopBarComponent(props: Props): JSX.Element {
@@ -144,6 +146,8 @@ export default function AnnotationTopBarComponent(props: Props): JSX.Element {
         switchNavigationBlocked,
         switchShowSearchPallet,
         showSearchFrameByName,
+        playbackSpeedMultiplier,
+        onChangePlaybackSpeedMultiplier,
     } = props;
 
     const playerItems: [JSX.Element, number][] = [];
@@ -173,6 +177,8 @@ export default function AnnotationTopBarComponent(props: Props): JSX.Element {
             onHoveredChapter={setHoveredChapter}
             onSelectChapter={onSelectChapter}
             setNavigationType={setNavigationType}
+            playbackSpeedMultiplier={playbackSpeedMultiplier}
+            onChangePlaybackSpeedMultiplier={onChangePlaybackSpeedMultiplier}
         />
     ), 0]);
 

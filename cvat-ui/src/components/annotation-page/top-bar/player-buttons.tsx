@@ -6,6 +6,7 @@ import React, { CSSProperties } from 'react';
 import { Col } from 'antd/lib/grid';
 import Icon from '@ant-design/icons';
 import Popover from 'antd/lib/popover';
+import Select from 'antd/lib/select';
 
 import CVATTooltip from 'components/common/cvat-tooltip';
 import GlobalHotKeys, { KeyMap } from 'utils/mousetrap-react';
@@ -50,6 +51,8 @@ interface Props {
     onBackward(): void;
     onFirstFrame(): void;
     onLastFrame(): void;
+    playbackSpeedMultiplier: number;
+    onChangePlaybackSpeedMultiplier(multiplier: number): void;
     onSearchAnnotations(direction: 'forward' | 'backward'): void;
     onSearchChapters(direction: 'forward' | 'backward'): void;
     onHoveredChapter(id: number | null): void;
@@ -128,6 +131,8 @@ function PlayerButtons(props: Props): JSX.Element {
         chapters,
         navigationType,
         workspace,
+        playbackSpeedMultiplier,
+        onChangePlaybackSpeedMultiplier,
         onSwitchPlay,
         onPrevFrame,
         onNextFrame,
@@ -381,6 +386,19 @@ function PlayerButtons(props: Props): JSX.Element {
                     onClick={onLastFrame}
                 />
             </CVATTooltip>
+            <Select
+                className='cvat-player-speed-selector'
+                value={playbackSpeedMultiplier}
+                onChange={onChangePlaybackSpeedMultiplier}
+                style={{ width: 60, marginLeft: 4 }}
+                size='small'
+            >
+                <Select.Option value={1}>1x</Select.Option>
+                <Select.Option value={2}>2x</Select.Option>
+                <Select.Option value={4}>4x</Select.Option>
+                <Select.Option value={8}>8x</Select.Option>
+                <Select.Option value={16}>16x</Select.Option>
+            </Select>
         </Col>
     );
 }

@@ -63,6 +63,7 @@ const defaultState: SettingsState = {
         brightnessLevel: 100,
         contrastLevel: 100,
         saturationLevel: 100,
+        playbackSpeedMultiplier: 1,
     },
     imageFilters: [],
     showDialog: false,
@@ -206,6 +207,15 @@ export default (state = defaultState, action: AnyAction): SettingsState => {
                 player: {
                     ...state.player,
                     frameSpeed: action.payload.frameSpeed,
+                },
+            };
+        }
+        case SettingsActionTypes.CHANGE_PLAYBACK_SPEED_MULTIPLIER: {
+            return {
+                ...state,
+                player: {
+                    ...state.player,
+                    playbackSpeedMultiplier: action.payload.playbackSpeedMultiplier,
                 },
             };
         }

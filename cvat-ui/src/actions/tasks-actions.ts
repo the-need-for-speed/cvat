@@ -33,6 +33,8 @@ export enum TasksActionTypes {
     UPDATE_TASK = 'UPDATE_TASK',
     UPDATE_TASK_SUCCESS = 'UPDATE_TASK_SUCCESS',
     UPDATE_TASK_FAILED = 'UPDATE_TASK_FAILED',
+    SHUFFLE_TASKS = 'SHUFFLE_TASKS',
+    SHUFFLE_PAGE = 'SHUFFLE_PAGE',
 }
 
 function getTasks(query: Partial<TasksQuery>, updateQuery: boolean, fetchingTimestamp: number): AnyAction {
@@ -373,6 +375,29 @@ export function updateTaskMetadataAsync(
             dispatch(updateTaskFailed(taskInstance.id, error));
             throw error;
         }
+    };
+}
+
+export function shuffleTasksAsync(): ThunkAction {
+    return async (dispatch: ThunkDispatch, getState): Promise<void> => {
+        const { gettingQuery } = getState().tasks;
+        const query = filterNull({ ...gettingQuery, page: 1, pageSize: 99999 });
+        try {
+            const result = await cvat.tasks.get(query);
+            dispatch({
+                type: TasksActionTypes.SHUFFLE_TASKS,
+                payload: { tasks: Array.from(result) },
+            });
+        } catch (error) {
+            dispatch(getTasksFailed(error));
+        }
+    };
+}
+
+export function shufflePage(page: number, pageSize: number): AnyAction {
+    return {
+        type: TasksActionTypes.SHUFFLE_PAGE,
+        payload: { page, pageSize },
     };
 }
 
