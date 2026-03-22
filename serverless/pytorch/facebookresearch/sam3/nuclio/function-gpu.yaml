@@ -1,0 +1,48 @@
+metadata:
+  name: pth-facebookresearch-sam3
+  namespace: cvat
+  annotations:
+    name: SAM 3 (Segment Anything with Concepts)
+    version: 1
+    type: detector
+    spec: |
+      [
+        { "id": 1, "name": "text_prompt", "type": "polygon" }
+      ]
+    framework: pytorch
+    spec_url:
+    help_message: Open-vocabulary detector. Map any CVAT label to the same model label — the label name is used as the SAM3 text prompt.
+
+spec:
+  description: SAM3 open-vocabulary instance segmentation (text-prompted)
+  runtime: 'python:3.9'
+  handler: main:handler
+  eventTimeout: 120s
+
+  env:
+    - name: SAM3_SERVER_URL
+      value: "http://172.18.0.1:8091"
+
+  build:
+    image: cvat.pth.facebookresearch.sam3:latest-gpu
+    baseImage: python:3.9-slim
+
+    directives:
+      preCopy:
+        - kind: RUN
+          value: pip install requests Pillow --no-cache-dir
+
+  triggers:
+    myHttpTrigger:
+      numWorkers: 1
+      kind: 'http'
+      workerAvailabilityTimeoutMilliseconds: 10000
+      attributes:
+        maxRequestBodySize: 33554432
+
+  platform:
+    attributes:
+      restartPolicy:
+        name: always
+        maximumRetryCount: 3
+      mountMode: volume

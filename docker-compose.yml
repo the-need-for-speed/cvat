@@ -85,6 +85,8 @@ services:
     container_name: cvat_server
     image: cvat/server:${CVAT_VERSION:-dev}
     restart: always
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       <<: *backend-deps
       cvat_opa:
@@ -113,6 +115,7 @@ services:
       - cvat_keys:/home/django/keys
       - cvat_logs:/home/django/logs
       - /media/2TB/recordings:/home/django/share:ro
+      - /home/docear/Projects/laings-customer-interest-analytics/data/preprocessed:/home/django/laings_preprocessed:ro
     networks:
       cvat:
         aliases:
@@ -311,6 +314,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./components/analytics/grafana_conf.yml:/etc/traefik/rules/grafana_conf.yml:ro
+      - ./components/sam3/sam3_route.yml:/etc/traefik/rules/sam3_route.yml:ro
     networks:
       - cvat
     logging:

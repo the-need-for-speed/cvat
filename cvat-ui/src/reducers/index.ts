@@ -945,6 +945,7 @@ export enum Workspace {
     SINGLE_SHAPE = 'Single shape',
     TAGS = 'Tag annotation',
     REVIEW = 'Review',
+    VIDEO_REVIEW = 'Video review',
 }
 
 export enum GridColor {

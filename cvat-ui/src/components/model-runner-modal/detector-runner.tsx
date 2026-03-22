@@ -8,6 +8,7 @@ import React, { useEffect, useState } from 'react';
 import { Row, Col } from 'antd/lib/grid';
 import Select from 'antd/lib/select';
 import Text from 'antd/lib/typography/Text';
+import Input from 'antd/lib/input';
 import InputNumber from 'antd/lib/input-number';
 import Button from 'antd/lib/button';
 import Switch from 'antd/lib/switch';
@@ -77,14 +78,22 @@ function DetectorRunner(props: Props): JSX.Element {
     const [detectorThreshold, setDetectorThreshold] = useState<number | null>(null);
     const [modelLabels, setModelLabels] = useState<LabelInterface[]>([]);
     const [taskLabels, setTaskLabels] = useState<LabelInterface[]>([]);
+    const [freetextPrompts, setFreetextPrompts] = useState<string>('');
+    const [freetextLabelID, setFreetextLabelID] = useState<number | null>(
+        labels.length ? labels[0].id as number : null,
+    );
+    const [freetextOutputType, setFreetextOutputType] = useState<'polygon' | 'rectangle'>('polygon');
 
     const model = models.find((_model): boolean => _model.id === modelID);
     const isDetector = model?.kind === ModelKind.DETECTOR;
     const isReId = model?.kind === ModelKind.REID;
-    const convertMasks2PolygonVisible = isDetector &&
+    const isFreetextModel = isDetector && model.labels.length === 1 &&
+        model.labels[0].name === 'text_prompt';
+    const convertMasks2PolygonVisible = isDetector && !isFreetextModel &&
         [LabelType.ANY, LabelType.MASK].includes(model.returnType);
 
-    const buttonEnabled = model && (isReId || (isDetector && mapping.length));
+    const freetextReady = isFreetextModel && freetextPrompts.trim().length > 0 && freetextLabelID !== null;
+    const buttonEnabled = model && (isReId || (isDetector && (isFreetextModel ? freetextReady : mapping.length)));
 
     useEffect(() => {
         const converted = labels.map((label) => ({
@@ -142,7 +151,59 @@ function DetectorRunner(props: Props): JSX.Element {
                     </Select>
                 </Col>
             </Row>
-            {isDetector && (
+            {isDetector && isFreetextModel && (
+                <div style={{ marginTop: 12 }}>
+                    <Row align='middle' style={{ marginBottom: 8 }}>
+                        <Col span={24}>
+                            <Text strong>Text Prompts</Text>
+                            <br />
+                            <Text type='secondary'>
+                                Enter one or more prompts separated by commas (e.g. person, car, dog)
+                            </Text>
+                        </Col>
+                    </Row>
+                    <Row align='middle' style={{ marginBottom: 8 }}>
+                        <Col span={24}>
+                            <Input.TextArea
+                                rows={2}
+                                placeholder='person, car, dog'
+                                value={freetextPrompts}
+                                onChange={(e) => setFreetextPrompts(e.target.value)}
+                            />
+                        </Col>
+                    </Row>
+                    <Row align='middle' style={{ marginBottom: 8 }}>
+                        <Col span={6}><Text>Output label:</Text></Col>
+                        <Col span={18}>
+                            <Select
+                                style={{ width: '100%' }}
+                                value={freetextLabelID}
+                                onChange={(val: number) => setFreetextLabelID(val)}
+                            >
+                                {labels.map((l: Label) => (
+                                    <Select.Option key={l.id as number} value={l.id as number}>
+                                        {l.name}
+                                    </Select.Option>
+                                ))}
+                            </Select>
+                        </Col>
+                    </Row>
+                    <Row align='middle' style={{ marginBottom: 8 }}>
+                        <Col span={6}><Text>Output type:</Text></Col>
+                        <Col span={18}>
+                            <Select
+                                style={{ width: '100%' }}
+                                value={freetextOutputType}
+                                onChange={(val: 'polygon' | 'rectangle') => setFreetextOutputType(val)}
+                            >
+                                <Select.Option value='polygon'>Polygon</Select.Option>
+                                <Select.Option value='rectangle'>Rectangle</Select.Option>
+                            </Select>
+                        </Col>
+                    </Row>
+                </div>
+            )}
+            {isDetector && !isFreetextModel && (
                 <div>
                     <div className='cvat-detector-runner-mapping-header'>
                         <div>
@@ -256,8 +317,37 @@ function DetectorRunner(props: Props): JSX.Element {
                         type='primary'
                         onClick={() => {
                             if (!model) return;
-                            const serverMapping = convertMappingToServer(mapping);
-                            if (model.kind === ModelKind.DETECTOR) {
+                            if (model.kind === ModelKind.DETECTOR && isFreetextModel) {
+                                const prompts = freetextPrompts
+                                    .split(',')
+                                    .map((p) => p.trim())
+                                    .filter((p) => p.length > 0);
+                                if (!prompts.length || freetextLabelID === null) return;
+                                const outputLabel = labels.find((l) => l.id === freetextLabelID);
+                                if (!outputLabel) return;
+
+                                // Build mapping: each prompt → output CVAT label
+                                const freetextMapping: ServerMapping = {};
+                                prompts.forEach((prompt) => {
+                                    freetextMapping[prompt] = {
+                                        name: outputLabel.name,
+                                        attributes: {},
+                                    };
+                                });
+
+                                const body = {
+                                    type: 'annotate_task' as const,
+                                    mapping: freetextMapping,
+                                    model_labels: prompts,
+                                    output_type: freetextOutputType,
+                                    cleanup,
+                                    conv_mask_to_poly: false,
+                                    ...(detectorThreshold !== null ? { threshold: detectorThreshold } : {}),
+                                };
+
+                                runInference(model, body);
+                            } else if (model.kind === ModelKind.DETECTOR) {
+                                const serverMapping = convertMappingToServer(mapping);
                                 const body: AnnotateTaskRequestBody = {
                                     type: 'annotate_task',
                                     mapping: serverMapping,

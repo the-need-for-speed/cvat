@@ -442,12 +442,41 @@ class LambdaFunction:
                         mapping_item["sublabels"], md_label["sublabels"], db_label.sublabels.all()
                     )
 
-        if not mapping:
+        # Detect text-prompt (freetext) models: single spec label named "text_prompt"
+        is_freetext_model = (
+            len(self.labels) == 1
+            and self.labels[0]["name"] == "text_prompt"
+            and "model_labels" in data
+        )
+
+        if is_freetext_model:
+            # For freetext models, the mapping keys are user-typed prompts
+            # (not model spec labels). Validate only that each maps to a valid task label.
+            freetext_prompts = data["model_labels"]
+            for prompt_key, mapping_item in mapping.items():
+                db_label_name = mapping_item["name"]
+                try:
+                    next(x for x in task_labels if x.name == db_label_name)
+                except StopIteration:
+                    raise ValidationError(
+                        f'Invalid mapping. Unknown db label "{db_label_name}"'
+                    )
+            # Build an enriched mapping with synthetic model labels and real db labels
+            enriched_mapping = {}
+            for prompt_key, mapping_item in mapping.items():
+                db_label = next(x for x in task_labels if x.name == mapping_item["name"])
+                enriched_mapping[prompt_key] = {
+                    **mapping_item,
+                    "md_label": {"name": prompt_key, "type": "polygon", "attributes": []},
+                    "db_label": db_label,
+                }
+            mapping = enriched_mapping
+        elif not mapping:
             mapping = make_default_mapping(model_labels, task_labels)
+            mapping = update_mapping(mapping, self.labels, task_labels)
         else:
             validate_labels_mapping(mapping, self.labels, task_labels)
-
-        mapping = update_mapping(mapping, self.labels, task_labels)
+            mapping = update_mapping(mapping, self.labels, task_labels)
 
         # Check job frame boundaries
         if db_job:
@@ -467,6 +496,10 @@ class LambdaFunction:
 
         if self.kind == FunctionKind.DETECTOR:
             payload.update({"image": self._get_image(db_task, mandatory_arg("frame"))})
+            if "model_labels" in data:
+                payload.update({"model_labels": data["model_labels"]})
+            if "output_type" in data:
+                payload.update({"output_type": data["output_type"]})
         elif self.kind == FunctionKind.INTERACTOR:
             payload.update(
                 {

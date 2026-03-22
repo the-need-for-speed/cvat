@@ -1,0 +1,22 @@
+http:
+  routers:
+    sam3:
+      entryPoints:
+      - web
+      middlewares:
+      - sam3-strip-prefix
+      service: sam3
+      rule: PathPrefix(`/sam3`)
+
+  middlewares:
+    sam3-strip-prefix:
+      stripprefix:
+        prefixes:
+        - /sam3
+
+  services:
+    sam3:
+      loadBalancer:
+        servers:
+        - url: http://172.18.0.1:8091
+        passHostHeader: false
