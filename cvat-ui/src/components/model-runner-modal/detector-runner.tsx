@@ -29,6 +29,8 @@ interface Props {
     models: MLModel[];
     labels: Label[];
     dimension: DimensionType;
+    startFrame?: number;
+    stopFrame?: number;
     runInference(model: MLModel, body: object): void;
 }
 
@@ -67,6 +69,7 @@ function convertMappingToServer(mapping: FullMapping): ServerMapping {
 function DetectorRunner(props: Props): JSX.Element {
     const {
         models, withCleanup, labels, dimension, runInference,
+        startFrame = 0, stopFrame = 0,
     } = props;
 
     const [modelID, setModelID] = useState<string | null>(null);
@@ -83,6 +86,8 @@ function DetectorRunner(props: Props): JSX.Element {
         labels.length ? labels[0].id as number : null,
     );
     const [freetextOutputType, setFreetextOutputType] = useState<'polygon' | 'rectangle'>('polygon');
+    const [freetextFrameFrom, setFreetextFrameFrom] = useState<number | null>(null);
+    const [freetextFrameTo, setFreetextFrameTo] = useState<number | null>(null);
 
     const model = models.find((_model): boolean => _model.id === modelID);
     const isDetector = model?.kind === ModelKind.DETECTOR;
@@ -199,6 +204,37 @@ function DetectorRunner(props: Props): JSX.Element {
                                 <Select.Option value='polygon'>Polygon</Select.Option>
                                 <Select.Option value='rectangle'>Rectangle</Select.Option>
                             </Select>
+                        </Col>
+                    </Row>
+                    <Row align='middle' style={{ marginBottom: 8 }}>
+                        <Col span={24}>
+                            <Text type='secondary'>
+                                {`Frame range ${startFrame}–${stopFrame} (leave empty for current frame only)`}
+                            </Text>
+                        </Col>
+                    </Row>
+                    <Row align='middle' style={{ marginBottom: 8 }} gutter={8}>
+                        <Col span={3}><Text>From:</Text></Col>
+                        <Col span={9}>
+                            <InputNumber
+                                style={{ width: '100%' }}
+                                min={startFrame}
+                                max={stopFrame}
+                                placeholder={String(startFrame)}
+                                value={freetextFrameFrom}
+                                onChange={(val) => setFreetextFrameFrom(val)}
+                            />
+                        </Col>
+                        <Col span={3}><Text>To:</Text></Col>
+                        <Col span={9}>
+                            <InputNumber
+                                style={{ width: '100%' }}
+                                min={startFrame}
+                                max={stopFrame}
+                                placeholder={String(stopFrame)}
+                                value={freetextFrameTo}
+                                onChange={(val) => setFreetextFrameTo(val)}
+                            />
                         </Col>
                     </Row>
                 </div>
@@ -335,6 +371,9 @@ function DetectorRunner(props: Props): JSX.Element {
                                     };
                                 });
 
+                                const hasFrameRange = freetextFrameFrom !== null && freetextFrameTo !== null
+                                    && freetextFrameTo >= freetextFrameFrom;
+
                                 const body = {
                                     type: 'annotate_task' as const,
                                     mapping: freetextMapping,
@@ -343,6 +382,9 @@ function DetectorRunner(props: Props): JSX.Element {
                                     cleanup,
                                     conv_mask_to_poly: false,
                                     ...(detectorThreshold !== null ? { threshold: detectorThreshold } : {}),
+                                    ...(hasFrameRange ? {
+                                        frame_range: [freetextFrameFrom, freetextFrameTo],
+                                    } : {}),
                                 };
 
                                 runInference(model, body);

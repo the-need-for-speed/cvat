@@ -34,6 +34,7 @@ import {
     updateActiveControl as updateActiveControlAction,
     updateAnnotationsAsync,
     createAnnotationsAsync,
+    removeObjectAsync,
     mergeAnnotationsAsync,
     groupAnnotationsAsync,
     joinAnnotationsAsync,
@@ -152,6 +153,7 @@ interface DispatchToProps {
     onCanvasErrorOccurred(error: Error): void;
     onStartIssue(position: number[]): void;
     onUpdateEditedObject(editedState: ObjectState | null): void;
+    onRemoveObject(objectState: ObjectState, force: boolean): void;
 }
 
 function mapStateToProps(state: CombinedState): StateToProps {
@@ -308,6 +310,9 @@ function mapDispatchToProps(dispatch: any): DispatchToProps {
         },
         onCreateAnnotations(states: ObjectState[]): void {
             dispatch(createAnnotationsAsync(states));
+        },
+        onRemoveObject(objectState: ObjectState, force: boolean): void {
+            dispatch(removeObjectAsync(objectState, force));
         },
         onMergeAnnotations(states: ObjectState[]): void {
             dispatch(mergeAnnotationsAsync(states));
@@ -628,6 +633,7 @@ class CanvasWrapperComponent extends React.PureComponent<Props> {
         canvasInstance.html().removeEventListener('canvas.dragshape', this.onCanvasShapeDragged as EventListener);
         canvasInstance.html().removeEventListener('canvas.resizeshape', this.onCanvasShapeResized as EventListener);
         canvasInstance.html().removeEventListener('canvas.clicked', this.onCanvasShapeClicked);
+        canvasInstance.html().removeEventListener('canvas.middleclicked', this.onCanvasShapeMiddleClicked);
         canvasInstance.html().removeEventListener('canvas.drawn', this.onCanvasShapeDrawn);
         canvasInstance.html().removeEventListener('canvas.merged', this.onCanvasObjectsMerged);
         canvasInstance.html().removeEventListener('canvas.grouped', this.onCanvasObjectsGrouped);
@@ -810,6 +816,14 @@ class CanvasWrapperComponent extends React.PureComponent<Props> {
     private onCanvasShapeClicked = (e: any): void => {
         const { onExpandObject } = this.props;
         scrollAndExpandState(e.detail.state, onExpandObject);
+    };
+
+    private onCanvasShapeMiddleClicked = (e: any): void => {
+        const { onRemoveObject } = this.props;
+        const { state } = e.detail;
+        if (state) {
+            onRemoveObject(state, true);
+        }
     };
 
     private onCanvasShapeDeactivated = (e: any): void => {
@@ -1084,6 +1098,7 @@ class CanvasWrapperComponent extends React.PureComponent<Props> {
         canvasInstance.html().addEventListener('canvas.dragshape', this.onCanvasShapeDragged as EventListener);
         canvasInstance.html().addEventListener('canvas.resizeshape', this.onCanvasShapeResized as EventListener);
         canvasInstance.html().addEventListener('canvas.clicked', this.onCanvasShapeClicked);
+        canvasInstance.html().addEventListener('canvas.middleclicked', this.onCanvasShapeMiddleClicked);
         canvasInstance.html().addEventListener('canvas.drawn', this.onCanvasShapeDrawn);
         canvasInstance.html().addEventListener('canvas.merged', this.onCanvasObjectsMerged);
         canvasInstance.html().addEventListener('canvas.grouped', this.onCanvasObjectsGrouped);

@@ -13,6 +13,9 @@ import {
     repeatDrawShapeAsync,
     pasteShapeAsync,
     resetAnnotationsGroup,
+    rememberObject,
+    updateAnnotationsAsync,
+    fetchAnnotationsAsync,
 } from 'actions/annotation-actions';
 import ControlsSideBarComponent from 'components/annotation-page/standard-workspace/controls-side-bar/controls-side-bar';
 import { ActiveControl, CombinedState, Rotation } from 'reducers';
@@ -26,6 +29,8 @@ interface StateToProps {
     normalizedKeyMap: Record<string, string>;
     labels: CombinedState['annotation']['job']['labels'];
     frameData: any;
+    activatedStateID: number | null;
+    annotationStates: any[];
 }
 
 interface DispatchToProps {
@@ -35,6 +40,9 @@ interface DispatchToProps {
     repeatDrawShape(): void;
     pasteShape(): void;
     redrawShape(): void;
+    setActiveLabel(labelID: number): void;
+    updateAnnotations(states: any[]): void;
+    fetchAnnotations(): void;
 }
 
 function mapStateToProps(state: CombinedState): StateToProps {
@@ -44,6 +52,10 @@ function mapStateToProps(state: CombinedState): StateToProps {
             job: { labels },
             player: {
                 frame: { data: frameData },
+            },
+            annotations: {
+                activatedStateID,
+                states: annotationStates,
             },
         },
         settings: {
@@ -60,6 +72,8 @@ function mapStateToProps(state: CombinedState): StateToProps {
         normalizedKeyMap,
         keyMap,
         frameData,
+        activatedStateID,
+        annotationStates,
     };
 }
 
@@ -82,6 +96,15 @@ function dispatchToProps(dispatch: any): DispatchToProps {
         },
         redrawShape(): void {
             dispatch(redrawShapeAsync());
+        },
+        setActiveLabel(labelID: number): void {
+            dispatch(rememberObject({ activeLabelID: labelID }));
+        },
+        updateAnnotations(states: any[]): void {
+            dispatch(updateAnnotationsAsync(states));
+        },
+        fetchAnnotations(): void {
+            dispatch(fetchAnnotationsAsync());
         },
     };
 }

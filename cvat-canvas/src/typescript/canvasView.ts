@@ -2662,6 +2662,22 @@ export class CanvasViewImpl implements CanvasView, Listener {
                 );
             });
 
+            this.svgShapes[state.clientID].on('auxclick.canvas', (e: MouseEvent): void => {
+                if (e.button === 1) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.canvas.dispatchEvent(
+                        new CustomEvent('canvas.middleclicked', {
+                            bubbles: false,
+                            cancelable: true,
+                            detail: {
+                                state,
+                            },
+                        }),
+                    );
+                }
+            });
+
             if (displayAllText) {
                 this.addText(state);
                 this.updateTextPosition(this.svgTexts[state.clientID]);

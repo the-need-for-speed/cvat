@@ -177,6 +177,8 @@ services:
     container_name: cvat_worker_annotation
     image: cvat/server:${CVAT_VERSION:-dev}
     restart: always
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on: *backend-deps
     environment:
       <<: *backend-env

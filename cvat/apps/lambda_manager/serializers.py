@@ -48,6 +48,20 @@ class FunctionCallRequestSerializer(serializers.Serializer):
         required=False,
         help_text="Label mapping from the model to the task labels",
     )
+    model_labels = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Text prompts for freetext models (e.g. SAM3)",
+    )
+    output_type = serializers.CharField(
+        required=False,
+        help_text="Output shape type: polygon or rectangle",
+    )
+    frame_range = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        help_text="Frame range [from, to] to limit detection",
+    )
 
 
 class FunctionCallParamsSerializer(serializers.Serializer):

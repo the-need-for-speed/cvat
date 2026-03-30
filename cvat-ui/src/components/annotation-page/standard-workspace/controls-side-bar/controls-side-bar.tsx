@@ -22,7 +22,8 @@ import CursorControl, { Props as CursorControlProps } from './cursor-control';
 import MoveControl, { Props as MoveControlProps } from './move-control';
 import FitControl, { Props as FitControlProps } from './fit-control';
 import ResizeControl, { Props as ResizeControlProps } from './resize-control';
-import ToolsControl from './tools-control';
+import ToolsControl, { getLastDetectorRun } from './tools-control';
+import notification from 'antd/lib/notification';
 import OpenCVControl from './opencv-control';
 import DrawRectangleControl, { Props as DrawRectangleControlProps } from './draw-rectangle-control';
 import DrawPolygonControl, { Props as DrawPolygonControlProps } from './draw-polygon-control';
@@ -49,12 +50,17 @@ interface Props {
     labels: Label[];
     frameData: any;
 
+    activatedStateID: number | null;
+    annotationStates: any[];
     updateActiveControl(activeControl: ActiveControl): void;
     rotateFrame(rotation: Rotation): void;
     repeatDrawShape(): void;
     pasteShape(): void;
     resetGroup(): void;
     redrawShape(): void;
+    setActiveLabel(labelID: number): void;
+    updateAnnotations(states: any[]): void;
+    fetchAnnotations(): void;
 }
 
 const componentShortcuts = {
@@ -113,6 +119,23 @@ const componentShortcuts = {
         sequences: ['alt+m'],
         scope: ShortcutScope.STANDARD_WORKSPACE_CONTROLS,
     },
+    REPEAT_DETECTOR_RUN: {
+        name: 'Repeat AI detection',
+        description: 'Re-run the last AI detector with the same settings on the current frame',
+        sequences: ['shift+d'],
+        scope: ShortcutScope.STANDARD_WORKSPACE_CONTROLS,
+    },
+    ...Object.fromEntries(
+        Array.from({ length: 9 }, (_, i) => [
+            `SELECT_LABEL_${i + 1}`,
+            {
+                name: `Select label ${i + 1}`,
+                description: `Set the active annotation label to label #${i + 1}`,
+                sequences: [`alt+${i + 1}`],
+                scope: ShortcutScope.STANDARD_WORKSPACE_CONTROLS,
+            },
+        ]),
+    ),
 };
 
 registerComponentShortcuts(componentShortcuts);
@@ -154,6 +177,11 @@ export default function ControlsSideBarComponent(props: Props): JSX.Element {
         pasteShape,
         resetGroup,
         redrawShape,
+        setActiveLabel,
+        updateAnnotations,
+        fetchAnnotations,
+        activatedStateID,
+        annotationStates,
         frameData,
     } = props;
 
@@ -246,6 +274,53 @@ export default function ControlsSideBarComponent(props: Props): JSX.Element {
             preventDefault(event);
             rotateFrame(Rotation.ANTICLOCKWISE90);
         },
+        REPEAT_DETECTOR_RUN: (event: KeyboardEvent | undefined) => {
+            preventDefault(event);
+            const last = getLastDetectorRun();
+            if (last?.runFn) {
+                last.runFn(last.model, last.body).catch((err: any) => {
+                    notification.error({
+                        message: 'Detection error',
+                        description: err?.message || 'Unknown error',
+                    });
+                });
+            }
+        },
+        ...Object.fromEntries(
+            Array.from({ length: 9 }, (_, i) => [
+                `SELECT_LABEL_${i + 1}`,
+                (event: KeyboardEvent | undefined) => {
+                    preventDefault(event);
+                    if (i >= labels.length) return;
+                    const label = labels[i];
+
+                    // If an object is selected, change its label
+                    if (activatedStateID !== null) {
+                        const objectState = annotationStates.find(
+                            (s: any) => s.clientID === activatedStateID,
+                        );
+                        if (objectState) {
+                            objectState.label = label;
+                            updateAnnotations([objectState]);
+                            notification.info({
+                                message: `Changed object label to: ${label.name}`,
+                                duration: 1,
+                                placement: 'bottomRight',
+                            });
+                            return;
+                        }
+                    }
+
+                    // Otherwise set the active label for new drawings
+                    setActiveLabel(label.id as number);
+                    notification.info({
+                        message: `Active label: ${label.name}`,
+                        duration: 1,
+                        placement: 'bottomRight',
+                    });
+                },
+            ]),
+        ),
         SWITCH_GROUP_MODE_STANDARD_CONTROLS: (event: KeyboardEvent | undefined): void => {
             if (event) event.preventDefault();
             dynamicGroupIconProps.onClick();

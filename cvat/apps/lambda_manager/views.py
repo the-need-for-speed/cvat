@@ -716,6 +716,9 @@ class LambdaQueue:
         request,
         *,
         job: int | None = None,
+        model_labels: list | None = None,
+        output_type: str | None = None,
+        frame_range: list | None = None,
     ) -> LambdaJob:
         queue = self._get_queue()
         rq_id = RequestId(
@@ -762,6 +765,9 @@ class LambdaQueue:
                         "conv_mask_to_poly": conv_mask_to_poly,
                         "mapping": mapping,
                         "max_distance": max_distance,
+                        "model_labels": model_labels,
+                        "output_type": output_type,
+                        "frame_range": frame_range,
                     },
                     depends_on=define_dependent_job(queue, user_id),
                     result_ttl=self.RESULT_TTL.total_seconds(),
@@ -1019,6 +1025,9 @@ class LambdaJob:
         conv_mask_to_poly: bool,
         *,
         db_job: Job | None = None,
+        model_labels: list | None = None,
+        output_type: str | None = None,
+        frame_range: list | None = None,
     ):
         collector = DetectionResultCollector(db_task, db_job)
 
@@ -1026,32 +1035,46 @@ class LambdaJob:
 
         frame_set = cls._get_frame_set(db_task, db_job)
 
-        for frame in frame_set:
+        # Filter to requested frame range if provided
+        if frame_range and len(frame_range) == 2:
+            range_start, range_end = int(frame_range[0]), int(frame_range[1])
+            frame_set = [f for f in frame_set if range_start <= f <= range_end]
+
+        total_frames = len(frame_set) if frame_set else 1
+
+        for idx, frame in enumerate(frame_set):
             if frame in db_task.data.deleted_frames:
                 continue
+
+            invoke_data = {
+                "frame": frame,
+                "mapping": mapping,
+                "threshold": threshold,
+                "conv_mask_to_poly": conv_mask_to_poly,
+            }
+            if model_labels is not None:
+                invoke_data["model_labels"] = model_labels
+            if output_type is not None:
+                invoke_data["output_type"] = output_type
 
             annotations = function.invoke(
                 db_task,
                 db_job=db_job,
-                data={
-                    "frame": frame,
-                    "mapping": mapping,
-                    "threshold": threshold,
-                    "conv_mask_to_poly": conv_mask_to_poly,
-                },
+                data=invoke_data,
                 converter=converter,
             )
 
-            progress = (frame + 1) / db_task.data.size
+            progress = (idx + 1) / total_frames
             if not cls._update_progress(progress):
                 break
 
             collector.add(annotations)
 
-            # Accumulate data during 100 frames before submitting results.
-            # It is optimization to make fewer calls to our server. Also
-            # it isn't possible to keep all results in memory.
-            if frame and frame % 100 == 0:
+            # Submit more frequently when processing a limited frame range
+            # (small batches, user expects real-time results), otherwise
+            # batch every 100 frames for full-task runs.
+            batch_size = 1 if frame_range else 100
+            if idx and idx % batch_size == 0:
                 collector.submit()
 
         collector.submit()
@@ -1213,6 +1236,9 @@ class LambdaJob:
                 kwargs.get("mapping"),
                 kwargs.get("conv_mask_to_poly"),
                 db_job=db_job,
+                model_labels=kwargs.get("model_labels"),
+                output_type=kwargs.get("output_type"),
+                frame_range=kwargs.get("frame_range"),
             )
         elif function.kind == FunctionKind.REID:
             cls._call_reid(
@@ -1441,6 +1467,9 @@ class RequestViewSet(viewsets.ViewSet):
             conv_mask_to_poly = request_data.get("conv_mask_to_poly", False)
             mapping = request_data.get("mapping")
             max_distance = request_data.get("max_distance")
+            model_labels = request_data.get("model_labels")
+            output_type = request_data.get("output_type")
+            frame_range = request_data.get("frame_range")
         except KeyError as err:
             raise ValidationError(
                 "`{}` lambda function was run ".format(request_data.get("function", "undefined"))
@@ -1461,6 +1490,9 @@ class RequestViewSet(viewsets.ViewSet):
             max_distance,
             request,
             job=job,
+            model_labels=model_labels,
+            output_type=output_type,
+            frame_range=frame_range,
         )
 
         handle_function_call(function, job or task, category="batch")

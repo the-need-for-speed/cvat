@@ -18,6 +18,7 @@ import Button from 'antd/lib/button';
 import Modal from 'antd/lib/modal';
 import Text from 'antd/lib/typography/Text';
 import Tabs from 'antd/lib/tabs';
+import Progress from 'antd/lib/progress';
 import { Row, Col } from 'antd/lib/grid';
 import notification from 'antd/lib/notification';
 import message from 'antd/lib/message';
@@ -32,7 +33,7 @@ import {
 } from 'cvat-core-wrapper';
 import openCVWrapper, { MatType } from 'utils/opencv-wrapper/opencv-wrapper';
 import {
-    CombinedState, ActiveControl, ToolsBlockerState, PluginComponent,
+    CombinedState, ActiveControl, ToolsBlockerState, PluginComponent, ActiveInference,
 } from 'reducers';
 import {
     interactWithCanvas,
@@ -41,6 +42,7 @@ import {
     updateAnnotationsAsync,
     createAnnotationsAsync,
 } from 'actions/annotation-actions';
+import { startInferenceAsync, cancelInferenceAsync } from 'actions/models-actions';
 import DetectorRunner, { AnnotateTaskRequestBody } from 'components/model-runner-modal/detector-runner';
 import LabelSelector from 'components/label-selector/label-selector';
 import CVATTooltip from 'components/common/cvat-tooltip';
@@ -69,6 +71,7 @@ interface StateToProps {
     toolsBlockerState: ToolsBlockerState;
     frameIsDeleted: boolean;
     interactorExtras: PluginComponent[];
+    activeInference: ActiveInference | null;
 }
 
 interface DispatchToProps {
@@ -78,6 +81,8 @@ interface DispatchToProps {
     onInteractionStart: typeof interactWithCanvas;
     onSwitchToolsBlockerState: typeof switchToolsBlockerState;
     switchNavigationBlocked: typeof switchNavigationBlockedAction;
+    startInference: (taskId: number, model: MLModel, body: object) => void;
+    cancelInference: (taskId: number) => void;
 }
 
 const MIN_SUPPORTED_INTERACTOR_VERSION = 2;
@@ -100,6 +105,7 @@ function mapStateToProps(state: CombinedState): StateToProps {
         },
         models: {
             interactors, detectors, trackers,
+            inferences,
         },
         settings: {
             workspace: { toolsBlockerState, defaultApproxPolyAccuracy },
@@ -131,6 +137,8 @@ function mapStateToProps(state: CombinedState): StateToProps {
         toolsBlockerState,
         frameIsDeleted,
         interactorExtras,
+        activeInference: (jobInstance as Job)?.taskId
+            ? inferences[(jobInstance as Job).taskId] || null : null,
     };
 }
 
@@ -141,6 +149,8 @@ const mapDispatchToProps = {
     fetchAnnotations: fetchAnnotationsAsync,
     onSwitchToolsBlockerState: switchToolsBlockerState,
     switchNavigationBlocked: switchNavigationBlockedAction,
+    startInference: startInferenceAsync,
+    cancelInference: cancelInferenceAsync,
 };
 
 type Props = StateToProps & DispatchToProps;
@@ -222,6 +232,17 @@ function registerPlugin(): (callback: null | (() => void)) => void {
 
 const onRemoveAnnotations = registerPlugin();
 
+// Store last detector run for "repeat detection" shortcut
+let lastDetectorRun: {
+    model: MLModel;
+    body: any;
+    runFn: ((model: MLModel, body: any) => Promise<void>) | null;
+} | null = null;
+
+export function getLastDetectorRun(): typeof lastDetectorRun {
+    return lastDetectorRun;
+}
+
 export class ToolsControlComponent extends React.PureComponent<Props, State> {
     private interaction: {
         id: string | null;
@@ -295,8 +316,24 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
     public componentDidUpdate(prevProps: Props, prevState: State): void {
         const {
             isActivated, defaultApproxPolyAccuracy, canvasInstance, states, toolsBlockerState,
+            activeInference, fetchAnnotations,
         } = this.props;
         const { approxPolyAccuracy, mode, activeTracker } = this.state;
+
+        // Auto-refresh annotations when background inference progress updates
+        if (activeInference && prevProps.activeInference) {
+            if (activeInference.progress !== prevProps.activeInference.progress) {
+                fetchAnnotations();
+            }
+        }
+        // Also refresh when inference just finished
+        if (
+            prevProps.activeInference &&
+            prevProps.activeInference.status !== 'finished' &&
+            activeInference?.status === 'finished'
+        ) {
+            fetchAnnotations();
+        }
 
         if (prevProps.states !== states || prevState.activeTracker !== activeTracker) {
             this.setState({
@@ -1202,6 +1239,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
     private renderDetectorBlock(): JSX.Element {
         const {
             jobInstance, detectors, curZOrder, frame, labels, createAnnotations,
+            activeInference, cancelInference,
         } = this.props;
 
         if (!detectors.length) {
@@ -1217,11 +1255,55 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
         }
 
         return (
+            <>
+            {activeInference && (
+                <div style={{ marginBottom: 12, padding: '8px 0' }}>
+                    <Row align='middle' justify='space-between'>
+                        <Col>
+                            <Text strong>
+                                {activeInference.status === 'finished'
+                                    ? 'Detection complete'
+                                    : 'Detection in progress...'}
+                            </Text>
+                        </Col>
+                        {activeInference.status !== 'finished' && (
+                            <Col>
+                                <Button
+                                    size='small'
+                                    danger
+                                    onClick={() => cancelInference(jobInstance.taskId)}
+                                >
+                                    Cancel
+                                </Button>
+                            </Col>
+                        )}
+                    </Row>
+                    <Progress
+                        percent={activeInference.progress || 0}
+                        status={
+                            activeInference.status === 'failed' ? 'exception' :
+                                activeInference.status === 'finished' ? 'success' : 'active'
+                        }
+                        size='small'
+                    />
+                    {activeInference.status === 'finished' && (
+                        <Button
+                            size='small'
+                            type='link'
+                            onClick={() => this.props.fetchAnnotations()}
+                        >
+                            Refresh annotations
+                        </Button>
+                    )}
+                </div>
+            )}
             <DetectorRunner
                 withCleanup={false}
                 models={detectors}
                 labels={labels}
                 dimension={jobInstance.dimension}
+                startFrame={jobInstance.startFrame}
+                stopFrame={jobInstance.stopFrame}
                 runInference={async (model: MLModel, body: AnnotateTaskRequestBody) => {
                     function loadAttributes(
                         attributes: { spec_id: number; value: string }[],
@@ -1229,64 +1311,115 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                         return Object.fromEntries(attributes.map((a) => [a.spec_id, a.value]));
                     }
 
+                    // Save for "repeat last detection" shortcut
+                    const runFn = async (m: MLModel, b: any): Promise<void> => {
+                        const { cleanup: _, ...rest } = b;
+                        const currentFrame = this.props.frame;
+                        const res = await core.lambda.call(jobInstance.taskId, m, {
+                            ...rest, type: 'annotate_frame', frame: currentFrame, job: jobInstance.id,
+                        }) as DetectorResults;
+
+                        const tagSt = res.tags.map((tag) => {
+                            const jl = jobInstance.labels.find((l) => l.id === tag.label_id)!;
+                            return new core.classes.ObjectState({
+                                attributes: Object.fromEntries(tag.attributes.map((a) => [a.spec_id, a.value])),
+                                frame: currentFrame, label: jl,
+                                objectType: ObjectType.TAG, source: core.enums.Source.AUTO,
+                            });
+                        });
+                        const shapeSt = res.shapes.map((shape) => {
+                            const jl = jobInstance.labels.find((l) => l.id === shape.label_id)!;
+                            return new core.classes.ObjectState({
+                                attributes: Object.fromEntries(shape.attributes.map((a) => [a.spec_id, a.value])),
+                                elements: shape.elements?.map((el) => ({
+                                    attributes: Object.fromEntries(el.attributes.map((a) => [a.spec_id, a.value])),
+                                    frame: currentFrame, label: jl.structure!.sublabels.find((s) => s.id === el.label_id)!,
+                                    objectType: ObjectType.SHAPE, occluded: el.occluded, outside: el.outside,
+                                    points: el.points, shapeType: el.type, source: core.enums.Source.AUTO,
+                                })),
+                                frame: currentFrame, label: jl, objectType: ObjectType.SHAPE,
+                                occluded: shape.occluded, points: shape.points, rotation: shape.rotation,
+                                shapeType: shape.type, source: core.enums.Source.AUTO, zOrder: this.props.curZOrder,
+                            });
+                        });
+                        createAnnotations([...tagSt, ...shapeSt]);
+                    };
+                    lastDetectorRun = { model, body, runFn };
+
                     try {
                         this.setState({ mode: 'detection', fetching: true });
 
                         // The function call endpoint doesn't support the cleanup parameter.
-                        const { cleanup, ...restOfBody } = body;
+                        const { cleanup, frame_range: frameRange, ...restOfBody } = body as any;
 
-                        const result = await core.lambda.call(jobInstance.taskId, model, {
-                            ...restOfBody, type: 'annotate_frame', frame, job: jobInstance.id,
-                        }) as DetectorResults;
+                        const processFrame = async (targetFrame: number): Promise<void> => {
+                            const result = await core.lambda.call(jobInstance.taskId, model, {
+                                ...restOfBody, type: 'annotate_frame', frame: targetFrame, job: jobInstance.id,
+                            }) as DetectorResults;
 
-                        const tagStates = result.tags.map((tag) => {
-                            const jobLabel = jobInstance.labels
-                                .find((jLabel) => jLabel.id === tag.label_id)!;
-
-                            return new core.classes.ObjectState({
-                                attributes: loadAttributes(tag.attributes),
-                                frame,
-                                label: jobLabel,
-                                objectType: ObjectType.TAG,
-                                source: core.enums.Source.AUTO,
+                            const tagStates = result.tags.map((tag) => {
+                                const jobLabel = jobInstance.labels
+                                    .find((jLabel) => jLabel.id === tag.label_id)!;
+                                return new core.classes.ObjectState({
+                                    attributes: loadAttributes(tag.attributes),
+                                    frame: targetFrame,
+                                    label: jobLabel,
+                                    objectType: ObjectType.TAG,
+                                    source: core.enums.Source.AUTO,
+                                });
                             });
-                        });
 
-                        const shapeStates = result.shapes.map((shape) => {
-                            const jobLabel = jobInstance.labels
-                                .find((jLabel) => jLabel.id === shape.label_id)!;
-
-                            return new core.classes.ObjectState({
-                                attributes: loadAttributes(shape.attributes),
-                                elements: shape.elements?.map((element) => {
-                                    const jobSublabel = jobLabel.structure!.sublabels
-                                        .find((sublabel) => sublabel.id === element.label_id)!;
-
-                                    return {
-                                        attributes: loadAttributes(element.attributes),
-                                        frame,
-                                        label: jobSublabel,
-                                        objectType: ObjectType.SHAPE,
-                                        occluded: element.occluded,
-                                        outside: element.outside,
-                                        points: element.points,
-                                        shapeType: element.type,
-                                        source: core.enums.Source.AUTO,
-                                    };
-                                }),
-                                frame,
-                                label: jobLabel,
-                                objectType: ObjectType.SHAPE,
-                                occluded: shape.occluded,
-                                points: shape.points,
-                                rotation: shape.rotation,
-                                shapeType: shape.type,
-                                source: core.enums.Source.AUTO,
-                                zOrder: curZOrder,
+                            const shapeStates = result.shapes.map((shape) => {
+                                const jobLabel = jobInstance.labels
+                                    .find((jLabel) => jLabel.id === shape.label_id)!;
+                                return new core.classes.ObjectState({
+                                    attributes: loadAttributes(shape.attributes),
+                                    elements: shape.elements?.map((element) => {
+                                        const jobSublabel = jobLabel.structure!.sublabels
+                                            .find((sublabel) => sublabel.id === element.label_id)!;
+                                        return {
+                                            attributes: loadAttributes(element.attributes),
+                                            frame: targetFrame,
+                                            label: jobSublabel,
+                                            objectType: ObjectType.SHAPE,
+                                            occluded: element.occluded,
+                                            outside: element.outside,
+                                            points: element.points,
+                                            shapeType: element.type,
+                                            source: core.enums.Source.AUTO,
+                                        };
+                                    }),
+                                    frame: targetFrame,
+                                    label: jobLabel,
+                                    objectType: ObjectType.SHAPE,
+                                    occluded: shape.occluded,
+                                    points: shape.points,
+                                    rotation: shape.rotation,
+                                    shapeType: shape.type,
+                                    source: core.enums.Source.AUTO,
+                                    zOrder: curZOrder,
+                                });
                             });
-                        });
 
-                        createAnnotations([...tagStates, ...shapeStates]);
+                            createAnnotations([...tagStates, ...shapeStates]);
+                        };
+
+                        if (Array.isArray(frameRange) && frameRange.length === 2) {
+                            // Run as a background job on the backend
+                            const { startInference } = this.props;
+                            startInference(jobInstance.taskId, model, {
+                                ...restOfBody,
+                                cleanup: false,
+                                frame_range: frameRange,
+                                job: jobInstance.id,
+                            });
+                            notification.info({
+                                message: 'Detection started',
+                                description: `Running on frames ${frameRange[0]}–${frameRange[1]} in the background. Check progress below.`,
+                            });
+                        } else {
+                            await processFrame(frame);
+                        }
                     } catch (error: any) {
                         notification.error({
                             description: <CVATMarkdown>{error.message}</CVATMarkdown>,
@@ -1298,6 +1431,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     }
                 }}
             />
+            </>
         );
     }
 
