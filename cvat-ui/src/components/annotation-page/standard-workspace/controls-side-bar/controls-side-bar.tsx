@@ -52,6 +52,7 @@ interface Props {
 
     activatedStateID: number | null;
     annotationStates: any[];
+    frameNumber: number;
     updateActiveControl(activeControl: ActiveControl): void;
     rotateFrame(rotation: Rotation): void;
     repeatDrawShape(): void;
@@ -136,6 +137,17 @@ const componentShortcuts = {
             },
         ]),
     ),
+    ...Object.fromEntries(
+        Array.from({ length: 9 }, (_, i) => [
+            `CHANGE_ALL_LABELS_${i + 1}`,
+            {
+                name: `Change all frame labels to ${i + 1}`,
+                description: `Change every annotation on the current frame to label #${i + 1}`,
+                sequences: [`shift+alt+${i + 1}`],
+                scope: ShortcutScope.STANDARD_WORKSPACE_CONTROLS,
+            },
+        ]),
+    ),
 };
 
 registerComponentShortcuts(componentShortcuts);
@@ -182,6 +194,7 @@ export default function ControlsSideBarComponent(props: Props): JSX.Element {
         fetchAnnotations,
         activatedStateID,
         annotationStates,
+        frameNumber,
         frameData,
     } = props;
 
@@ -315,6 +328,36 @@ export default function ControlsSideBarComponent(props: Props): JSX.Element {
                     setActiveLabel(label.id as number);
                     notification.info({
                         message: `Active label: ${label.name}`,
+                        duration: 1,
+                        placement: 'bottomRight',
+                    });
+                },
+            ]),
+        ),
+        ...Object.fromEntries(
+            Array.from({ length: 9 }, (_, i) => [
+                `CHANGE_ALL_LABELS_${i + 1}`,
+                (event: KeyboardEvent | undefined) => {
+                    preventDefault(event);
+                    if (i >= labels.length) return;
+                    const label = labels[i];
+
+                    const frameStates = annotationStates.filter(
+                        (s: any) => s.frame === frameNumber,
+                    );
+                    if (!frameStates.length) {
+                        notification.info({
+                            message: 'No annotations on this frame',
+                            duration: 1,
+                            placement: 'bottomRight',
+                        });
+                        return;
+                    }
+
+                    frameStates.forEach((s: any) => { s.label = label; });
+                    updateAnnotations(frameStates);
+                    notification.info({
+                        message: `Changed ${frameStates.length} annotation(s) to: ${label.name}`,
                         duration: 1,
                         placement: 'bottomRight',
                     });

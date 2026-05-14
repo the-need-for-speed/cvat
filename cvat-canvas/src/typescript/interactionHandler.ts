@@ -96,7 +96,13 @@ export class InteractionHandlerImpl implements InteractionHandler {
 
     private interactPoints(): void {
         const eventListener = (e: MouseEvent): void => {
-            if ((e.button === 0 || (e.button === 2 && this.interactionData.minNegVertices >= 0)) && !e.altKey) {
+            const negAllowed = this.interactionData.minNegVertices >= 0;
+            const isModifierNeg = e.button === 0 && (e.ctrlKey || e.metaKey || e.shiftKey) && negAllowed;
+            const isRightClickNeg = e.button === 2 && negAllowed;
+            const isPositiveClick = e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+            const isNegative = isModifierNeg || isRightClickNeg;
+
+            if ((isPositiveClick || isNegative) && !e.altKey) {
                 e.preventDefault();
                 const [cx, cy] = translateToSVG((this.canvas.node as any) as SVGSVGElement, [e.clientX, e.clientY]);
                 if (!this.isWithinFrame(cx, cy)) return;
@@ -105,7 +111,7 @@ export class InteractionHandlerImpl implements InteractionHandler {
                     .circle((this.controlPointsSize * 2) / this.geometry.scale)
                     .center(cx, cy)
                     .fill('white')
-                    .stroke(e.button === 0 ? 'green' : 'red')
+                    .stroke(isNegative ? 'red' : 'green')
                     .addClass('cvat_interaction_point')
                     .attr({
                         'stroke-width': consts.POINTS_STROKE_WIDTH / this.geometry.scale,

@@ -10,7 +10,6 @@ import Modal from 'antd/lib/modal';
 import Text from 'antd/lib/typography/Text';
 import InputNumber from 'antd/lib/input-number';
 import Checkbox from 'antd/lib/checkbox';
-import Collapse from 'antd/lib/collapse';
 import Dropdown from 'antd/lib/dropdown';
 import Button from 'antd/lib/button';
 import message from 'antd/lib/message';
@@ -122,6 +121,11 @@ function AnnotationMenuComponent(): JSX.Element {
             let removeFrom: number | undefined;
             let removeUpTo: number | undefined;
             let removeOnlyKeyframes = false;
+
+            const runRemoval = (): void => {
+                dispatch(removeAnnotationsAsyncAction(removeFrom, removeUpTo, removeOnlyKeyframes));
+            };
+
             Modal.confirm({
                 title: 'Remove Annotations',
                 content: (
@@ -130,49 +134,68 @@ function AnnotationMenuComponent(): JSX.Element {
                         <Text>It will stay on the server till you save the job. Continue?</Text>
                         <br />
                         <br />
-                        <Collapse
-                            bordered={false}
-                            items={[{
-                                key: 1,
-                                label: <Text>Select Range</Text>,
-                                children: (
-                                    <>
-                                        <Text>From: </Text>
-                                        <InputNumber
-                                            min={0}
-                                            max={stopFrame}
-                                            onChange={(value) => {
-                                                removeFrom = value ?? undefined;
-                                            }}
-                                        />
-                                        <Text>  To: </Text>
-                                        <InputNumber
-                                            min={0}
-                                            max={stopFrame}
-                                            onChange={(value) => {
-                                                removeUpTo = value ?? undefined;
-                                            }}
-                                        />
-                                        <CVATTooltip title='Applicable only for annotations in range'>
-                                            <br />
-                                            <br />
-                                            <Checkbox
-                                                onChange={(check) => {
-                                                    removeOnlyKeyframes = check.target.checked;
-                                                }}
-                                            >
-                                                Delete only keyframes for tracks
-                                            </Checkbox>
-                                        </CVATTooltip>
-                                    </>
-                                ),
-                            }]}
-                        />
+                        <Text strong>Select Range</Text>
+                        <div style={{ marginTop: 8 }}>
+                            <Text>From: </Text>
+                            <InputNumber
+                                min={0}
+                                max={stopFrame}
+                                onChange={(value) => {
+                                    removeFrom = value ?? undefined;
+                                }}
+                            />
+                            <Text>  To: </Text>
+                            <InputNumber
+                                min={0}
+                                max={stopFrame}
+                                onChange={(value) => {
+                                    removeUpTo = value ?? undefined;
+                                }}
+                            />
+                            <CVATTooltip title='Applicable only for annotations in range'>
+                                <br />
+                                <br />
+                                <Checkbox
+                                    onChange={(check) => {
+                                        removeOnlyKeyframes = check.target.checked;
+                                    }}
+                                >
+                                    Delete only keyframes for tracks
+                                </Checkbox>
+                            </CVATTooltip>
+                        </div>
+                        <br />
+                        <Text type='danger' strong>
+                            {`If you leave the range blank, ALL annotations in the entire job `}
+                            {`(frames 0–${stopFrame}) will be removed.`}
+                        </Text>
                     </div>
                 ),
                 className: 'cvat-modal-confirm-remove-annotation',
                 onOk: () => {
-                    dispatch(removeAnnotationsAsyncAction(removeFrom, removeUpTo, removeOnlyKeyframes));
+                    const removingWholeJob = typeof removeFrom === 'undefined' &&
+                        typeof removeUpTo === 'undefined';
+                    if (removingWholeJob) {
+                        Modal.confirm({
+                            title: 'Remove ALL annotations in this job?',
+                            content: (
+                                <Text>
+                                    {`No frame range was specified, so every annotation in the `}
+                                    {`entire job (frames 0–${stopFrame}) will be removed. `}
+                                    {'This is applied as soon as the job is saved (including autosave).'}
+                                </Text>
+                            ),
+                            className: 'cvat-modal-confirm-remove-annotation',
+                            okButtonProps: {
+                                type: 'primary',
+                                danger: true,
+                            },
+                            okText: 'Remove all',
+                            onOk: runRemoval,
+                        });
+                    } else {
+                        runRemoval();
+                    }
                 },
                 okButtonProps: {
                     type: 'primary',

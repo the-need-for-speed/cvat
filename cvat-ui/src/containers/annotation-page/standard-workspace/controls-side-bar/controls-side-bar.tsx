@@ -31,6 +31,7 @@ interface StateToProps {
     frameData: any;
     activatedStateID: number | null;
     annotationStates: any[];
+    frameNumber: number;
 }
 
 interface DispatchToProps {
@@ -51,7 +52,7 @@ function mapStateToProps(state: CombinedState): StateToProps {
             canvas: { instance: canvasInstance, activeControl },
             job: { labels },
             player: {
-                frame: { data: frameData },
+                frame: { number: frameNumber, data: frameData },
             },
             annotations: {
                 activatedStateID,
@@ -74,6 +75,7 @@ function mapStateToProps(state: CombinedState): StateToProps {
         frameData,
         activatedStateID,
         annotationStates,
+        frameNumber,
     };
 }
 

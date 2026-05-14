@@ -1,0 +1,47 @@
+metadata:
+  name: pth-facebookresearch-sam2
+  namespace: cvat
+  annotations:
+    name: SAM 2 (Interactor)
+    version: 2
+    type: interactor
+    spec:
+    min_pos_points: 0
+    min_neg_points: 0
+    startswith_box_optional: true
+    framework: pytorch
+    help_message: Click positive/negative points or draw a bounding box to segment an object using SAM 2.1 Hiera Large.
+
+spec:
+  description: SAM2 interactive segmentation (points + box prompts)
+  runtime: 'python:3.9'
+  handler: main:handler
+  eventTimeout: 30s
+
+  env:
+    - name: SAM2_SERVER_URL
+      value: "http://172.18.0.1:8091"
+
+  build:
+    image: cvat.pth.facebookresearch.sam2:latest-gpu
+    baseImage: python:3.9-slim
+
+    directives:
+      preCopy:
+        - kind: RUN
+          value: pip install requests --no-cache-dir
+
+  triggers:
+    myHttpTrigger:
+      numWorkers: 1
+      kind: 'http'
+      workerAvailabilityTimeoutMilliseconds: 10000
+      attributes:
+        maxRequestBodySize: 33554432
+
+  platform:
+    attributes:
+      restartPolicy:
+        name: always
+        maximumRetryCount: 3
+      mountMode: volume
